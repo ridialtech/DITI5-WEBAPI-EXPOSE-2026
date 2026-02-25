@@ -1,0 +1,3 @@
+# DITI5-WEBAPI-EXPOSE-2026
+
+Projet d'exposé ASP.NET Core Web API Best Practices - Classe DITI5 2026
