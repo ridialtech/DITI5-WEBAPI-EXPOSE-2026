@@ -53,7 +53,7 @@ namespace WebApi.Controllers
                 int.TryParse(_configuration["JWT:RefreshTokenValidityInDays"], out
                 int refreshTokenValidityInDays);
                 user.RefreshToken = refreshToken;
-                user.RefreshTokenExpiryTime = DateTime.Now.AddDays(refreshTokenValidityInDays);
+                user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(refreshTokenValidityInDays);
                 await _userManager.UpdateAsync(user);
                 return Ok(new
                 {
@@ -167,7 +167,7 @@ RegisterModel model)
 #pragma warning restore CS8600 // Converting null literal or possible null value to non - nullable type.
             var user = await _userManager.FindByNameAsync(username);
             if (user == null || user.RefreshToken != refreshToken ||
-            user.RefreshTokenExpiryTime <= DateTime.Now)
+            user.RefreshTokenExpiryTime <= DateTime.UtcNow)
             {
                 return BadRequest("Invalid access token or refresh token");
             }
@@ -217,7 +217,7 @@ RegisterModel model)
             var token = new JwtSecurityToken(
                 issuer: _configuration["JWT:ValidIssuer"],
                 audience: _configuration["JWT:ValidAudience"],
-                expires: DateTime.Now.AddMinutes(tokenValidityInMinutes),
+                expires: DateTime.UtcNow.AddMinutes(tokenValidityInMinutes),
                 claims: authClaims,
                 signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
             );
