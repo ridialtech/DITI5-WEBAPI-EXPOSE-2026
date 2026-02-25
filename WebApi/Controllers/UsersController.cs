@@ -45,4 +45,14 @@ public class UsersController : ControllerBase
         _userService.Delete(id);
         return Ok(new { message = "User deleted" });
     }
+
+     [HttpGet]
+    public IActionResult Get()
+    {
+        // Fonctionne pour les deux schémas
+        var username = User.FindFirst("preferred_username")?.Value   // Keycloak
+                    ?? User.FindFirst(ClaimTypes.Name)?.Value;       // Local JWT
+
+        return Ok(new { username });
+    }
 }

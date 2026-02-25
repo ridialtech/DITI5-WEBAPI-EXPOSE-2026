@@ -20,7 +20,7 @@ var connectionString = configuration.GetConnectionString("DbCahierTexteContext")
 // DataContext avec configuration locale (OnConfiguring)
 builder.Services.AddDbContext<DataContext>(options => options.UseNpgsql(connectionString));
 
-// ApplicationDbContext utilise la M�ME connection string
+// ApplicationDbContext utilise la M�ME connection string
 builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString));
 
 // =============================
@@ -37,10 +37,11 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
 
 builder.Services.AddAuthentication(options =>
 {
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultAuthenticateScheme = "MultiScheme";
+    options.DefaultChallengeScheme    = "MultiScheme";
+
 })
-.AddJwtBearer(options =>
+.AddJwtBearer( "LocalJwt", options =>
 {
     options.SaveToken = true;
     options.RequireHttpsMetadata = false;
@@ -56,9 +57,90 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey = new SymmetricSecurityKey(
             Encoding.UTF8.GetBytes(configuration["JWT:Secret"]))
     };
+
 });
 
-builder.Services.AddAuthorization();
+
+// ── Schéma 2 : Keycloak ──────────────────────────────────────
+.AddJwtBearer("Keycloak", options =>
+{
+    options.Authority            = configuration["Keycloak:Authority"];
+    
+    options.Audience             = configuration["Keycloak:Audience"];
+    options.RequireHttpsMetadata = false; 
+    options.SaveToken            = true;
+
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer   = true,
+        ValidIssuer      = configuration["Keycloak:Authority"],
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ClockSkew        = TimeSpan.Zero
+    };
+
+    // Mapper les rôles Keycloak → ClaimTypes.Role
+    options.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = context =>
+        {
+            var identity    = context.Principal?.Identity as ClaimsIdentity;
+            var realmAccess = context.Principal?.FindFirst("realm_access")?.Value;
+
+            if (realmAccess is not null)
+            {
+                var roles = JsonDocument.Parse(realmAccess)
+                    .RootElement
+                    .GetProperty("roles")
+                    .EnumerateArray();
+
+                foreach (var role in roles)
+                    identity?.AddClaim(new Claim(ClaimTypes.Role, role.GetString()!));
+            }
+            return Task.CompletedTask;
+        }
+    };
+})
+// ── Schéma combiné : essaie LocalJwt d'abord, puis Keycloak ──
+.AddPolicyScheme("MultiScheme", "LocalJwt OR Keycloak", options =>
+{
+    options.ForwardDefaultSelector = context =>
+    {
+        var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+
+        if (authHeader?.StartsWith("Bearer ") == true)
+        {
+            var token   = authHeader.Substring("Bearer ".Length).Trim();
+            var handler = new JwtSecurityTokenHandler();
+
+            if (handler.CanReadToken(token))
+            {
+                var jwt    = handler.ReadJwtToken(token);
+                var issuer = jwt.Issuer;
+
+                // Si l'issuer correspond à Keycloak → schéma Keycloak
+                if (issuer.Contains(configuration["Keycloak:Authority"]!))
+                    return "Keycloak";
+            }
+        }
+
+        // Par défaut → ton JWT local
+        return "LocalJwt";
+    };
+});
+
+builder.Services.AddAuthorization(options =>
+{
+    // Politique qui accepte l'un ou l'autre
+    options.AddPolicy("AnyScheme", policy =>
+        policy.AddAuthenticationSchemes("LocalJwt", "Keycloak")
+              .RequireAuthenticatedUser());
+
+    // Politique réservée aux admins Keycloak
+    options.AddPolicy("KeycloakAdmin", policy =>
+        policy.AddAuthenticationSchemes("Keycloak")
+              .RequireRole("admin"));
+});
 
 // =============================
 //  CONTROLLERS + JSON OPTIONS
