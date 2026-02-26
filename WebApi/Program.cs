@@ -2,7 +2,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using WebApi.Entities;
 using WebApi.Helpers;
@@ -38,10 +40,29 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = "MultiScheme";
-    options.DefaultChallengeScheme    = "MultiScheme";
+    options.DefaultChallengeScheme = "MultiScheme";
 
 })
-.AddJwtBearer( "LocalJwt", options =>
+
+.AddPolicyScheme("MultiScheme", "MultiScheme", options =>
+{
+    options.ForwardDefaultSelector = context =>
+    {
+        var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+
+        if (authHeader != null && authHeader.StartsWith("Bearer "))
+        {
+            var token = authHeader.Substring("Bearer ".Length).Trim();
+
+            // Si token commence par ton secret JWT local → LocalJwt
+            if (token.Length > 20 && token.Contains("."))
+                return "LocalJwt";
+        }
+
+        return "keycloak";
+    };
+})
+.AddJwtBearer("LocalJwt", options =>
 {
     options.SaveToken = true;
     options.RequireHttpsMetadata = false;
@@ -58,76 +79,65 @@ builder.Services.AddAuthentication(options =>
             Encoding.UTF8.GetBytes(configuration["JWT:Secret"]))
     };
 
-});
-
-
-// ── Schéma 2 : Keycloak ──────────────────────────────────────
-.AddJwtBearer("Keycloak", options =>
-{
-    options.Authority            = configuration["Keycloak:Authority"];
-    
-    options.Audience             = configuration["Keycloak:Audience"];
-    options.RequireHttpsMetadata = false; 
-    options.SaveToken            = true;
-
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer   = true,
-        ValidIssuer      = configuration["Keycloak:Authority"],
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ClockSkew        = TimeSpan.Zero
-    };
-
-    // Mapper les rôles Keycloak → ClaimTypes.Role
-    options.Events = new JwtBearerEvents
-    {
-        OnTokenValidated = context =>
-        {
-            var identity    = context.Principal?.Identity as ClaimsIdentity;
-            var realmAccess = context.Principal?.FindFirst("realm_access")?.Value;
-
-            if (realmAccess is not null)
-            {
-                var roles = JsonDocument.Parse(realmAccess)
-                    .RootElement
-                    .GetProperty("roles")
-                    .EnumerateArray();
-
-                foreach (var role in roles)
-                    identity?.AddClaim(new Claim(ClaimTypes.Role, role.GetString()!));
-            }
-            return Task.CompletedTask;
-        }
-    };
 })
-// ── Schéma combiné : essaie LocalJwt d'abord, puis Keycloak ──
-.AddPolicyScheme("MultiScheme", "LocalJwt OR Keycloak", options =>
+
+// ================= Keycloak JWT =================
+.AddJwtBearer("keycloak", options =>
+ {
+     options.Authority = configuration["Keycloak:Authority"];
+     options.RequireHttpsMetadata = false;
+     options.SaveToken = true;
+
+     options.TokenValidationParameters = new TokenValidationParameters
+     {
+         ValidateIssuer = true,
+         ValidateAudience = true,
+         ValidateLifetime = true,
+         ClockSkew = TimeSpan.Zero,
+
+         ValidAudience = configuration["Keycloak:Audience"]
+     
+ };
+
+     options.Events = new JwtBearerEvents
+     {
+         OnTokenValidated = context =>
+         {
+             var identity = context.Principal?.Identity as ClaimsIdentity;
+
+             var realmAccess = context.Principal?
+                 .FindFirst("realm_access")?
+                 .Value;
+
+             if (!string.IsNullOrEmpty(realmAccess))
+             {
+                 try
+                 {
+                     var roles = JsonDocument.Parse(realmAccess)
+                         .RootElement
+                         .GetProperty("roles")
+                         .EnumerateArray();
+
+                     foreach (var role in roles)
+                     {
+                         identity?.AddClaim(
+                             new Claim(ClaimTypes.Role, role.GetString() ?? "")
+                         );
+                     }
+                 }
+                 catch { }
+             }
+
+             return Task.CompletedTask;
+         }
+     };
+ });
+
+
+object AddJwtBearer(string v, Action<object> value)
 {
-    options.ForwardDefaultSelector = context =>
-    {
-        var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
-
-        if (authHeader?.StartsWith("Bearer ") == true)
-        {
-            var token   = authHeader.Substring("Bearer ".Length).Trim();
-            var handler = new JwtSecurityTokenHandler();
-
-            if (handler.CanReadToken(token))
-            {
-                var jwt    = handler.ReadJwtToken(token);
-                var issuer = jwt.Issuer;
-
-                // Si l'issuer correspond à Keycloak → schéma Keycloak
-                if (issuer.Contains(configuration["Keycloak:Authority"]!))
-                    return "Keycloak";
-            }
-        }
-
-        // Par défaut → ton JWT local
-        return "LocalJwt";
-    };
-});
+    throw new NotImplementedException();
+}
 
 builder.Services.AddAuthorization(options =>
 {

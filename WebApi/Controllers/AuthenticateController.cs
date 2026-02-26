@@ -103,10 +103,10 @@ namespace WebApi.Controllers
 
         return Ok(new
         {
-            token         = result!.AccessToken,
-            refresh_token = result.RefreshToken,
-            expiration    = DateTime.UtcNow.AddSeconds(result.ExpiresIn),
-            source        = "keycloak"
+            token = result.AccessToken ?? "",
+            refresh_token = result.RefreshToken ?? "",
+            expiration = DateTime.UtcNow.AddSeconds(result.ExpiresIn),
+            source = "keycloak"
         });
     }
 
