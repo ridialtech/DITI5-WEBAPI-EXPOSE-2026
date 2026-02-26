@@ -18,14 +18,17 @@ namespace WebApi.Controllers
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly IConfiguration _configuration;
-        public AuthenticateController(
+        private readonly HttpClient _httpClient;
+        public AuthenticateController(  
         UserManager<ApplicationUser> userManager,
         RoleManager<IdentityRole> roleManager,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        HttpClient httpClient)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _configuration = configuration;
+            _httpClient = httpClient;
         }
         [HttpPost]
         [Route("login")]
@@ -64,6 +67,79 @@ namespace WebApi.Controllers
             }
             return Unauthorized();
         }
+
+    // ─────────────────────────────────────────────────────────
+    // NOUVEAU : Login Keycloak → Keycloak génère le JWT
+    // ─────────────────────────────────────────────────────────
+    [HttpPost("keycloak-login")]
+    public async Task<IActionResult> KeycloakLogin([FromBody] LoginModel model)
+    {
+        var keycloakUrl = _configuration["Keycloak:Authority"];
+        var clientId    = _configuration["Keycloak:ClientId"];
+        var secret      = _configuration["Keycloak:ClientSecret"];
+
+        // Appel direct au Token Endpoint de Keycloak
+        var formData = new Dictionary<string, string>
+        {
+            ["grant_type"]    = "password",
+            ["client_id"]     = clientId!,
+            ["client_secret"] = secret!,
+            ["username"]      = model.Username,
+            ["password"]      = model.Password,
+            ["scope"]         = "openid profile email"
+        };
+
+        var response = await _httpClient.PostAsync(
+            $"{keycloakUrl}/protocol/openid-connect/token",
+            new FormUrlEncodedContent(formData));
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            return Unauthorized(new { message = "Keycloak authentication failed", detail = error });
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<KeycloakTokenResponse>();
+
+        return Ok(new
+        {
+            token = result.AccessToken ?? "",
+            refresh_token = result.RefreshToken ?? "",
+            expiration = DateTime.UtcNow.AddSeconds(result.ExpiresIn),
+            source = "keycloak"
+        });
+    }
+
+
+    // ─────────────────────────────────────────────────────────
+    // NOUVEAU : Refresh Token Keycloak
+    // ─────────────────────────────────────────────────────────
+    [HttpPost("keycloak-refresh")]
+    public async Task<IActionResult> KeycloakRefresh([FromBody] RefreshTokenModel model)
+    {
+        var keycloakUrl = _configuration["Keycloak:Authority"];
+        var clientId    = _configuration["Keycloak:ClientId"];
+        var secret      = _configuration["Keycloak:ClientSecret"];
+
+        var formData = new Dictionary<string, string>
+        {
+            ["grant_type"]    = "refresh_token",
+            ["client_id"]     = clientId!,
+            ["client_secret"] = secret!,
+            ["refresh_token"] = model.RefreshToken
+        };
+
+        var response = await _httpClient.PostAsync(
+            $"{keycloakUrl}/protocol/openid-connect/token",
+            new FormUrlEncodedContent(formData));
+
+        if (!response.IsSuccessStatusCode)
+            return Unauthorized(new { message = "Refresh token invalide ou expiré" });
+
+        var result = await response.Content.ReadFromJsonAsync<KeycloakTokenResponse>();
+        return Ok(result);
+    }
+
         [HttpPost]
         [Route("register")]
         public async Task<IActionResult> Register([FromBody] RegisterModel model)

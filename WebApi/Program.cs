@@ -2,7 +2,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using WebApi.Entities;
 using WebApi.Helpers;
@@ -20,7 +22,7 @@ var connectionString = configuration.GetConnectionString("DbCahierTexteContext")
 // DataContext avec configuration locale (OnConfiguring)
 builder.Services.AddDbContext<DataContext>(options => options.UseNpgsql(connectionString));
 
-// ApplicationDbContext utilise la M�ME connection string
+// ApplicationDbContext utilise la M�ME connection string
 builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString));
 
 // =============================
@@ -37,10 +39,30 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
 
 builder.Services.AddAuthentication(options =>
 {
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultAuthenticateScheme = "MultiScheme";
+    options.DefaultChallengeScheme = "MultiScheme";
+
 })
-.AddJwtBearer(options =>
+
+.AddPolicyScheme("MultiScheme", "MultiScheme", options =>
+{
+    options.ForwardDefaultSelector = context =>
+    {
+        var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+
+        if (authHeader != null && authHeader.StartsWith("Bearer "))
+        {
+            var token = authHeader.Substring("Bearer ".Length).Trim();
+
+            // Si token commence par ton secret JWT local → LocalJwt
+            if (token.Length > 20 && token.Contains("."))
+                return "LocalJwt";
+        }
+
+        return "keycloak";
+    };
+})
+.AddJwtBearer("LocalJwt", options =>
 {
     options.SaveToken = true;
     options.RequireHttpsMetadata = false;
@@ -56,9 +78,79 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey = new SymmetricSecurityKey(
             Encoding.UTF8.GetBytes(configuration["JWT:Secret"]))
     };
-});
 
-builder.Services.AddAuthorization();
+})
+
+// ================= Keycloak JWT =================
+.AddJwtBearer("keycloak", options =>
+ {
+     options.Authority = configuration["Keycloak:Authority"];
+     options.RequireHttpsMetadata = false;
+     options.SaveToken = true;
+
+     options.TokenValidationParameters = new TokenValidationParameters
+     {
+         ValidateIssuer = true,
+         ValidateAudience = true,
+         ValidateLifetime = true,
+         ClockSkew = TimeSpan.Zero,
+
+         ValidAudience = configuration["Keycloak:Audience"]
+     
+ };
+
+     options.Events = new JwtBearerEvents
+     {
+         OnTokenValidated = context =>
+         {
+             var identity = context.Principal?.Identity as ClaimsIdentity;
+
+             var realmAccess = context.Principal?
+                 .FindFirst("realm_access")?
+                 .Value;
+
+             if (!string.IsNullOrEmpty(realmAccess))
+             {
+                 try
+                 {
+                     var roles = JsonDocument.Parse(realmAccess)
+                         .RootElement
+                         .GetProperty("roles")
+                         .EnumerateArray();
+
+                     foreach (var role in roles)
+                     {
+                         identity?.AddClaim(
+                             new Claim(ClaimTypes.Role, role.GetString() ?? "")
+                         );
+                     }
+                 }
+                 catch { }
+             }
+
+             return Task.CompletedTask;
+         }
+     };
+ });
+
+
+object AddJwtBearer(string v, Action<object> value)
+{
+    throw new NotImplementedException();
+}
+
+builder.Services.AddAuthorization(options =>
+{
+    // Politique qui accepte l'un ou l'autre
+    options.AddPolicy("AnyScheme", policy =>
+        policy.AddAuthenticationSchemes("LocalJwt", "Keycloak")
+              .RequireAuthenticatedUser());
+
+    // Politique réservée aux admins Keycloak
+    options.AddPolicy("KeycloakAdmin", policy =>
+        policy.AddAuthenticationSchemes("Keycloak")
+              .RequireRole("admin"));
+});
 
 // =============================
 //  CONTROLLERS + JSON OPTIONS
