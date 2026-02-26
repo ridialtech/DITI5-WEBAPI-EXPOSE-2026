@@ -1,0 +1,20 @@
+﻿syntax = "proto3";
+
+option csharp_namespace = "WebApi.GrpcServices";
+
+service UserService {
+  rpc GetUser (UserRequest) returns (UserResponse);
+}
+
+message UserRequest {
+  int32 userId = 1;
+}
+
+message UserResponse {
+  int32 userId = 1;
+  string title = 2;
+  string firstName = 3;
+  string lastName = 4;
+  string email = 5;
+  string role = 6;
+}

@@ -80,6 +80,15 @@ builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 builder.Services.AddScoped<IUserService, UserService>();
 
 // =============================
+// Ajout Grpc
+// =============================
+builder.Services.AddControllers();
+builder.Services.AddGrpc();
+builder.Services.AddDbContext<DataContext>();
+
+
+
+// =============================
 // SWAGGER / API DOCUMENTATION
 // =============================
 
@@ -92,9 +101,21 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
+
+// =============================
+// Ajout Grpc services
+// =============================
+
 // =============================
 // MIDDLEWARE PIPELINE
 // =============================
+app.UseRouting();
+app.UseAuthorization();
+
+app.MapControllers();
+app.MapGrpcService<WebApi.GrpcServices.UserGrpcService>();
+
+
 
 if (app.Environment.IsDevelopment())
 {
