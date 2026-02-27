@@ -1,35 +1,36 @@
 ﻿using Grpc.Core;
-using WebApi.Entities;
-using WebApi.Helpers;
 using WebApi.Services;
 
 namespace WebApi.GrpcServices
 {
-    public class UserGrpcService : UserService.UserServiceBase
+    public class UserGrpcService : UserGrpc.UserGrpcBase
     {
-        private readonly DataContext _context;
+        private readonly IUserService _userService;
 
-        public UserGrpcService(DataContext context)
+        public UserGrpcService(IUserService userService)
         {
-            _context = context;
+            _userService = userService;
         }
 
-        public override async Task<UserResponse> GetUser(UserRequest request, ServerCallContext context)
+        public override Task<UserResponse> GetUser(UserRequest request, ServerCallContext context)
         {
-            var user = await _context.Users.FindAsync(request.UserId);
-
-            if (user == null)
-                throw new RpcException(new Status(StatusCode.NotFound, "User not found"));
-
-            return new UserResponse
+            try
             {
-                UserId = user.Id,
-                Title = user.Title ?? "",
-                FirstName = user.FirstName ?? "",
-                LastName = user.LastName ?? "",
-                Email = user.Email ?? "",
-                Role = user.Role.ToString()
-            };
+                var user = _userService.GetById(request.UserId);
+                return Task.FromResult(new UserResponse
+                {
+                    UserId = user.Id,
+                    Title = user.Title ?? "",
+                    FirstName = user.FirstName ?? "",
+                    LastName = user.LastName ?? "",
+                    Email = user.Email ?? "",
+                    Role = user.Role.ToString()
+                });
+            }
+            catch (KeyNotFoundException)
+            {
+                throw new RpcException(new Status(StatusCode.NotFound, "User not found"));
+            }
         }
     }
 }

@@ -1,8 +1,7 @@
 ﻿syntax = "proto3";
-
 option csharp_namespace = "WebApi.GrpcServices";
 
-service UserService {
+service UserGrpc {
   rpc GetUser (UserRequest) returns (UserResponse);
 }
 

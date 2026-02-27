@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -11,30 +11,17 @@ using WebApi.Services;
 var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;
 
-// =============================
-//  DATABASE CONFIGURATION
-// =============================
-
+// DATABASE
 var connectionString = configuration.GetConnectionString("DbCahierTexteContext");
-
-// DataContext avec configuration locale (OnConfiguring)
 builder.Services.AddDbContext<DataContext>(options => options.UseNpgsql(connectionString));
-
-// ApplicationDbContext utilise la M�ME connection string
 builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString));
 
-// =============================
-//  IDENTITY CONFIGURATION
-// =============================
-
+// IDENTITY
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddDefaultTokenProviders();
 
-// =============================
-//  JWT AUTHENTICATION
-// =============================
-
+// JWT
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -54,16 +41,12 @@ builder.Services.AddAuthentication(options =>
         ValidAudience = configuration["JWT:ValidAudience"],
         ValidIssuer = configuration["JWT:ValidIssuer"],
         IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(configuration["JWT:Secret"]))
+            Encoding.UTF8.GetBytes(configuration["JWT:Secret"]
+                ?? throw new InvalidOperationException("JWT:Secret manquant"))) // ✅ fix null
     };
 });
 
-builder.Services.AddAuthorization();
-
-// =============================
-//  CONTROLLERS + JSON OPTIONS
-// =============================
-
+// CONTROLLERS
 builder.Services.AddControllers()
     .AddJsonOptions(x =>
     {
@@ -71,51 +54,32 @@ builder.Services.AddControllers()
         x.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
     });
 
-// =============================
-//  CORS, AUTO MAPPER & SERVICES
-// =============================
-
+// SERVICES
 builder.Services.AddCors();
 builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 builder.Services.AddScoped<IUserService, UserService>();
 
-// =============================
-// Ajout Grpc
-// =============================
-builder.Services.AddControllers();
+// GRPC
 builder.Services.AddGrpc();
-builder.Services.AddDbContext<DataContext>();
 
-
-
-// =============================
-// SWAGGER / API DOCUMENTATION
-// =============================
-
+// SWAGGER
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// =============================
-//  BUILD APPLICATION
-// =============================
-
 var app = builder.Build();
 
-
-// =============================
-// Ajout Grpc services
-// =============================
-
-// =============================
-// MIDDLEWARE PIPELINE
-// =============================
+// MIDDLEWARE (ordre important !)
 app.UseRouting();
+
+app.UseCors(x => x
+    .AllowAnyOrigin()
+    .AllowAnyMethod()
+    .AllowAnyHeader());
+
+app.UseAuthentication(); // ✅ avant Authorization
 app.UseAuthorization();
 
-app.MapControllers();
-app.MapGrpcService<WebApi.GrpcServices.UserGrpcService>();
-
-
+app.UseMiddleware<ErrorHandlerMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
@@ -123,22 +87,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseCors(x => x
-    .AllowAnyOrigin()
-    .AllowAnyMethod()
-    .AllowAnyHeader());
-
 app.UseHttpsRedirection();
-
-app.UseAuthentication();
-app.UseAuthorization();
-
-app.UseMiddleware<ErrorHandlerMiddleware>();
-
 app.MapControllers();
-
-// =============================
-//  RUN APPLICATION
-// =============================
+app.MapGrpcService<WebApi.GrpcServices.UserGrpcService>(); // ✅ gRPC
 
 app.Run();
