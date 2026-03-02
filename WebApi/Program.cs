@@ -11,17 +11,23 @@ using WebApi.Services;
 var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;
 
+// =============================
 // DATABASE
+// =============================
 var connectionString = configuration.GetConnectionString("DbCahierTexteContext");
 builder.Services.AddDbContext<DataContext>(options => options.UseNpgsql(connectionString));
 builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString));
 
+// =============================
 // IDENTITY
+// =============================
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddDefaultTokenProviders();
 
+// =============================
 // JWT
+// =============================
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -42,11 +48,13 @@ builder.Services.AddAuthentication(options =>
         ValidIssuer = configuration["JWT:ValidIssuer"],
         IssuerSigningKey = new SymmetricSecurityKey(
             Encoding.UTF8.GetBytes(configuration["JWT:Secret"]
-                ?? throw new InvalidOperationException("JWT:Secret manquant"))) // ✅ fix null
+                ?? throw new InvalidOperationException("JWT:Secret manquant")))
     };
 });
 
+// =============================
 // CONTROLLERS
+// =============================
 builder.Services.AddControllers()
     .AddJsonOptions(x =>
     {
@@ -54,21 +62,33 @@ builder.Services.AddControllers()
         x.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
     });
 
+// =============================
 // SERVICES
+// =============================
 builder.Services.AddCors();
 builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 builder.Services.AddScoped<IUserService, UserService>();
 
-// GRPC
+// =============================
+// GRPC + REFLECTION
+// =============================
 builder.Services.AddGrpc();
+builder.Services.AddGrpcReflection();
 
+// =============================
 // SWAGGER
+// =============================
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// =============================
+// BUILD
+// =============================
 var app = builder.Build();
 
+// =============================
 // MIDDLEWARE (ordre important !)
+// =============================
 app.UseRouting();
 
 app.UseCors(x => x
@@ -76,7 +96,7 @@ app.UseCors(x => x
     .AllowAnyMethod()
     .AllowAnyHeader());
 
-app.UseAuthentication(); // ✅ avant Authorization
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.UseMiddleware<ErrorHandlerMiddleware>();
@@ -88,7 +108,12 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// =============================
+// ENDPOINTS
+// =============================
 app.MapControllers();
-app.MapGrpcService<WebApi.GrpcServices.UserGrpcService>(); // ✅ gRPC
+app.MapGrpcService<WebApi.GrpcServices.UserGrpcService>();
+app.MapGrpcReflectionService();
 
 app.Run();
